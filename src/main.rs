@@ -1,30 +1,55 @@
+use crate::db::genre::insert_genre;
 use async_std::prelude::FutureExt;
 use sqlx::mysql::MySqlPoolOptions;
+use thiserror::Error;
 
-use crate::db::genre::insert_genre;
-
+pub mod db;
 pub mod manganelo;
 pub mod readm;
-pub mod db;
 
-#[async_std::main]
-async fn main() -> anyhow::Result<()>{
-    println!("Hello, world!");
+pub type Result<T> = std::result::Result<T, Error>;
 
-    let mut configs = dotenvy::dotenv_iter().expect("No env file found");
+#[derive(Error, Debug)]
+pub enum Error {
 
-    let db_url = configs.find(|f| {
-        if let Ok(t) = f {
-            if t.0 == "DATABASE_URL" {
-                return true;
-            }
-        }
-        return false;
-    }).expect("DATABASE_URL must be set").expect("DATABASE_URL must be set").1;
+    #[error("Text Parse Error")]
+    TextParseError,
+
+    #[error(transparent)]
+    SQLError(#[from] sqlx::Error),
+
+    #[error(transparent)]
+    NetworkError(#[from] isahc::Error),
+
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+
+    #[error(transparent)]
+    OtherError(#[from] Box<dyn std::error::Error>)
+
+}
+
+async fn setup_db() -> Result<sqlx::Pool<sqlx::MySql>> {
+    let configs = dotenvy::dotenv_iter().expect("No env file found");
+
+    let db_url = configs
+        .filter_map(std::result::Result::ok)
+        .find(|f| f.0 == "DATABASE_URL")
+        .expect("DATABASE_URL must be set")
+        .1;
 
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
-        .connect(db_url.as_str()).await?;
+        .connect(db_url.as_str())
+        .await?;
+    Ok(pool)
+}
+
+#[async_std::main]
+async fn main() -> Result<()> {
+    println!("Hello, world!");
+
+    let pool = setup_db().await?;
 
     let f1 = manganelo::entity::get_manganelo_genre();
     let f2 = readm::entity::get_readm_genre();
