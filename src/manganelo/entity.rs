@@ -3,6 +3,7 @@ use std::collections::{HashSet, HashMap};
 use isahc::prelude::*;
 use mangaverse_entity::models::{manga::MangaTable, source::SourceTable, genre::Genre};
 use scraper::{Html, Selector};
+use sqlx::types::chrono::NaiveDateTime;
 
 use crate::{Result, Error};
 
@@ -152,14 +153,34 @@ pub async fn get_manga<'a>(url: String, sc: &'a SourceTable, map: &'a HashMap<St
 
 	let metadata_table = iter_label.zip(iter_value);
 
+	for (label, value) in metadata_table {
+		match label.text().collect::<String>().as_str() {
+			AUTHOR => mng.authors.extend(value.text().collect::<String>().split(&['-']).map(ToString::to_string)),
+			ALTERNATIVE_NAME => {mng.titles.extend(value.text().collect::<String>().split(&[',', ';']).map(ToString::to_string))},
+			STATUS => mng.status.extend(value.text().map(|f| f.to_uppercase())),
+			GENRES => mng.genres.extend(value.text().collect::<String>().split(&['-']).map(|f| map.get(f)).filter(Option::is_some).map(Option::unwrap)),
+			_ => {}
+		};
+	}
 
+	let table_label_selector = Selector::parse("span.stre-label").unwrap();
+	let table_value_selector = Selector::parse("span.stre-value").unwrap();
 
-	// for (label, value) in metadata_table {
-	// 	match label.text().collect::<String>() {
-	// 		AUTHOR => ,
-	// 		STATUS => 
-	// 	}
-	// }
-	
+	let iter_label = doc.select(&table_label_selector);
+	let iter_value = doc.select(&table_value_selector);
+
+	let metadata_table = iter_label.zip(iter_value);
+
+	for (label, value) in metadata_table {
+		match label.text().collect::<String>().as_str() {
+			UPDATED => {
+				let y  = value.text().collect::<String>();
+				let x = &y[0..y.len() - 3];
+				mng.last_updated = Some(NaiveDateTime::parse_from_str(x, "MMM dd,yyyy - HH:mm").map_err(|_| Error::TextParseError)?);
+			},
+			_ => {}
+		};
+	}
+
 	Ok(mng)
 }
