@@ -3,15 +3,16 @@ use std::collections::{HashSet, HashMap};
 use isahc::prelude::*;
 use mangaverse_entity::models::{manga::MangaTable, source::SourceTable, genre::Genre};
 use scraper::{Html, Selector};
-use sqlx::types::chrono::NaiveDateTime;
+use sqlx::{types::chrono::NaiveDateTime, Pool, MySql};
 
-use crate::{Result, Error};
+use crate::{Result, Error, readm::insert_source_if_not_exists};
 
 const AUTHOR: &str = "Author(s) :";
 const ALTERNATIVE_NAME: &str = "Alternative :";
 const STATUS: &str = "Status :";
 const GENRES: &str = "Genres :";
 const UPDATED: &str = "Updated :";
+const SOURCE_NAME: &str = "manganelo";
 
 pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
     let url = "https://manganato.com/genre-all";
@@ -28,8 +29,8 @@ pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
         .collect())
 }
 
-pub async fn get_manganelo_source() -> Result<SourceTable> {
-	todo!()
+pub async fn get_manganelo_source(pool: &Pool<MySql>) -> Result<SourceTable> {
+	insert_source_if_not_exists(SOURCE_NAME, 2, pool).await
 }
 
 /*
@@ -158,7 +159,7 @@ pub async fn get_manga<'a>(url: String, sc: &'a SourceTable, map: &'a HashMap<St
 			AUTHOR => mng.authors.extend(value.text().collect::<String>().split(&['-']).map(ToString::to_string)),
 			ALTERNATIVE_NAME => {mng.titles.extend(value.text().collect::<String>().split(&[',', ';']).map(ToString::to_string))},
 			STATUS => mng.status.extend(value.text().map(|f| f.to_uppercase())),
-			GENRES => mng.genres.extend(value.text().collect::<String>().split(&['-']).map(|f| map.get(f)).filter(Option::is_some).map(Option::unwrap)),
+			GENRES => mng.genres.extend(value.text().collect::<String>().split(&['-']).filter_map(|f| map.get(f))),
 			_ => {}
 		};
 	}
@@ -172,14 +173,11 @@ pub async fn get_manga<'a>(url: String, sc: &'a SourceTable, map: &'a HashMap<St
 	let metadata_table = iter_label.zip(iter_value);
 
 	for (label, value) in metadata_table {
-		match label.text().collect::<String>().as_str() {
-			UPDATED => {
-				let y  = value.text().collect::<String>();
-				let x = &y[0..y.len() - 3];
-				mng.last_updated = Some(NaiveDateTime::parse_from_str(x, "MMM dd,yyyy - HH:mm").map_err(|_| Error::TextParseError)?);
-			},
-			_ => {}
-		};
+		if label.text().collect::<String>() == UPDATED {
+			let y  = value.text().collect::<String>();
+			let x = &y[0..y.len() - 3];
+			mng.last_updated = Some(NaiveDateTime::parse_from_str(x, "MMM dd,yyyy - HH:mm").map_err(|_| Error::TextParseError)?);
+		}
 	}
 
 	Ok(mng)

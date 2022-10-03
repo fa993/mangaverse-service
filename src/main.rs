@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use crate::db::genre::insert_genre;
 use async_std::prelude::FutureExt;
+use mangaverse_entity::models::{source::SourceTable, genre::Genre};
 use sqlx::mysql::MySqlPoolOptions;
 use thiserror::Error;
+use tuple_conv::RepeatedTuple;
 
 pub mod db;
 pub mod manganelo;
@@ -25,7 +29,19 @@ pub enum Error {
     IOError(#[from] std::io::Error),
 
     #[error(transparent)]
-    OtherError(#[from] Box<dyn std::error::Error>)
+    OtherError(#[from] Box<dyn std::error::Error>),
+
+    #[error("You shouldn't be seeing this")]
+    NoError
+
+}
+
+#[derive(Default, Debug)]
+pub struct Context {
+
+    sources: HashMap<String, SourceTable>,
+    genres: HashMap<String, Genre>,
+    
 
 }
 
@@ -51,11 +67,21 @@ async fn main() -> Result<()> {
 
     let pool = setup_db().await?;
 
+    let mut c = Context::default();
+
     let f1 = manganelo::entity::get_manganelo_genre();
     let f2 = readm::entity::get_readm_genre();
-    let mut r = f1.try_join(f2).await?;
-    r.0.extend(r.1);
-    let all = insert_genre(&r.0, &pool).await?;
-    println!("{:#?}", all);
+    let r = f1.try_join(f2).await?.to_vec().into_iter().flatten().collect();
+
+    insert_genre(&r, &pool, &mut c.genres).await?;
+
+    let g1 = manganelo::entity::get_manganelo_source(&pool);
+    let g2 = readm::entity::get_readm_source(&pool);
+
+    let s = g1.try_join(g2).await?;
+    
+    c.sources = s.to_vec().into_iter().map(|f| (f.name.clone(), f)).collect();
+
+    println!("{:#?}", c);
     Ok(())
 }
