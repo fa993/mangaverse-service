@@ -9,7 +9,7 @@ use crate::Result;
 pub async fn insert_genre(
     set: &HashSet<String>,
     pool: &Pool<MySql>,
-    out: &mut HashMap<String, Genre>
+    out: &mut HashMap<String, Genre>,
 ) -> Result<()> {
     let mut q = QueryBuilder::new("INSERT into genre(genre_id, name) ");
 
@@ -29,6 +29,6 @@ pub async fn insert_genre(
     .fetch_all(pool)
     .await?;
 
-    out.extend(all.into_iter().map(|f| (f.name.to_string(), f)));    
+    out.extend(all.into_iter().map(|f| (f.name.to_string(), f)));
     Ok(())
 }

@@ -1,11 +1,16 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 
 use isahc::prelude::*;
-use mangaverse_entity::models::{manga::MangaTable, source::SourceTable, genre::Genre};
+use mangaverse_entity::models::{
+    chapter::ChapterTable, genre::Genre, manga::MangaTable, page::PageTable, source::SourceTable,
+};
 use scraper::{Html, Selector};
-use sqlx::{types::chrono::NaiveDateTime, Pool, MySql};
+use sqlx::{
+    types::chrono::{NaiveDateTime, Utc},
+    MySql, Pool,
+};
 
-use crate::{Result, Error, readm::insert_source_if_not_exists};
+use crate::{readm::insert_source_if_not_exists, Error, Result};
 
 const AUTHOR: &str = "Author(s) :";
 const ALTERNATIVE_NAME: &str = "Alternative :";
@@ -30,155 +35,182 @@ pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
 }
 
 pub async fn get_manganelo_source(pool: &Pool<MySql>) -> Result<SourceTable> {
-	insert_source_if_not_exists(SOURCE_NAME, 2, pool).await
+    insert_source_if_not_exists(SOURCE_NAME, 2, pool).await
 }
 
-/*
+pub async fn get_manga<'a>(
+    url: String,
+    sc: &'a SourceTable,
+    map: &'a HashMap<String, Genre>,
+) -> Result<MangaTable<'a>> {
+    let mut mng: MangaTable = MangaTable::new(sc);
+    mng.is_listed = true;
+    mng.url = url;
 
-        boolean error = false;
-		Exception e = null;
-		MangaDTO mndt = new MangaDTO();
-		mndt.setURL(url);
-		mndt.setDescription("");
-		mndt.setSource(s);
-		try {
-			Document el = Jsoup.connect(url).get();
-			Optional.ofNullable(el.selectFirst("div.story-info-right > h1")).map(t -> t.text().strip())
-					.ifPresentOrElse(t -> {
-						mndt.setPrimaryTitle(t);
-						mndt.getTitles().add(t);
-					}, () -> {
-						throw new RuntimeException("No title");
-					});
-			Optional.ofNullable(el.selectFirst("span.info-image > img"))
-					.ifPresentOrElse(t -> mndt.setCoverURL(t.attr("src")), () -> {
-						throw new RuntimeException("No Cover URL");
-					});
-			Elements labels = el.select("td.table-label");
-			Elements values = el.select("td.table-value");
-			for (int i = 0; i < labels.size(); i++) {
-				switch (labels.get(i).text()) {
-				case AUTHOR -> extractWithTrim(values.get(i).text(), mndt.getAuthors(), EMPTY_SET, '-');
-				case ALTERNATIVE_NAME -> extractWithTrim(values.get(i).text(), mndt.getTitles(), EMPTY_SET, ',', ';');
-				case STATUS -> mndt.setStatus(values.get(i).text().toUpperCase());
-				case GENRES -> extractWithTrim(values.get(i).text(), mndt.getGenres(), EMPTY_SET, '-');
-				default -> System.out.println("Not recognized");
-				}
-			}
-			Elements labels2 = el.select("span.stre-label");
-			Elements values2 = el.select("span.stre-value");
-			for (int i = 0; i < labels2.size(); i++) {
-				switch (labels2.get(i).text()) {
-				case UPDATED:
-					String x = values2.get(i).text();
-					mndt.setLastUpdated(FMT.parse(x.substring(0, x.length() - 3), Instant::from));
-					break;
-				default:
-				}
-			}
-			Optional.ofNullable(el.selectFirst(".panel-story-info-description")).ifPresent(t -> {
-				mndt.setDescription(t.text().substring(13).strip());
-			});
-			Elements ls = el.select("a.chapter-name");
-			Elements ls2 = el.select("span.chapter-time");
-			for (int i = 0; i < ls.size(); i++) {
-				Element t1 = ls.get(i);
-				Element t2 = ls2.get(i);
-				String x = t1.text();
-				String chapName = "";
-				String chapNumber = "";
-				try {
-					int y = x.indexOf(':');
-					int chp = x.indexOf("Chapter");
-					if (chp < 0) {
-						chapName = x;
-					} else if (y > -1) {
-						chapName = x.substring(y + 2).strip();
-						chapNumber = x.substring(chp + "Chapter".length() + 1, y).strip();
-					} else {
-						chapNumber = x.substring(chp + "Chapter".length() + 1).strip();
-					}
-				} catch (Exception ex) {
-					ex.printStackTrace();
-					System.out.println("Happened here: " + x + " with manga " + mndt);
-					chapName = x;
-					e = ex;
-					error = true;
-				}
-				ChapterDTO cdt = new ChapterDTO();
-				cdt.setChapterName(chapName);
-				cdt.setChapterNumber(chapNumber);
-				cdt.setSequenceNumber(ls.size() - i - 1);
-				Optional.ofNullable(t2.attr("title")).ifPresent(t -> cdt.setUpdatedAt(FMTC.parse(t, Instant::from)));
-				try {
-					cdt.setImagesURL(getImages(t1.attr("abs:href")));
-				} catch (Exception ex) {
-					ex.printStackTrace();
-					error = true;
-					e = ex;
-				}
-				mndt.getChapters().add(cdt);
-			}
-		} catch (Exception ex) {
-			System.out.println("Happened Here: " + mndt);
-			throw new MangaFetchingException(url, mndt, ex);
-		}
-		if (error) {
-			throw new MangaFetchingException(url, mndt, e);
-		}
-		return mndt;
+    let doc = Html::parse_document(
+        isahc::get_async(mng.url.as_str())
+            .await?
+            .text()
+            .await?
+            .as_str(),
+    );
 
-*/
+    let name_selector = Selector::parse("div.story-info-right > h1").unwrap();
 
-pub async fn get_manga<'a>(url: String, sc: &'a SourceTable, map: &'a HashMap<String, Genre>) -> Result<MangaTable<'a>> {
+    mng.name.extend(
+        doc.select(&name_selector)
+            .next()
+            .ok_or(Error::TextParseError)?
+            .text(),
+    );
 
-	let mut mng: MangaTable = MangaTable::new(sc);
+    mng.name = mng.name.trim().to_string();
 
-	// let mut man = MangaTable::default();
+    mng.titles.push(mng.name.clone());
 
-    let doc = Html::parse_document(isahc::get_async(url.as_str()).await?.text().await?.as_str());
+    mng.cover_url.push_str(
+        doc.select(&Selector::parse("span.info-image > img").unwrap())
+            .next()
+            .and_then(|f| f.value().attr("src"))
+            .ok_or(Error::TextParseError)?,
+    );
 
-	let name_selector = Selector::parse("div.story-info-right > h1").unwrap();
+    let table_label_selector = Selector::parse("td.table-label").unwrap();
+    let table_value_selector = Selector::parse("td.table-value").unwrap();
 
-	mng.name.extend(doc.select(&name_selector).next().ok_or(Error::TextParseError)?.text());
+    let iter_label = doc.select(&table_label_selector);
+    let iter_value = doc.select(&table_value_selector);
 
-	mng.titles.push(mng.name.clone());
+    let metadata_table = iter_label.zip(iter_value);
 
-	mng.cover_url.push_str(doc.select(&Selector::parse("span.info-image > img").unwrap()).next().and_then(|f| f.value().attr("src")).ok_or(Error::TextParseError)?);
+    for (label, value) in metadata_table {
+        match label.text().collect::<String>().as_str() {
+            AUTHOR => mng.authors.extend(
+                value
+                    .text()
+                    .collect::<String>()
+                    .split(&['-'])
+                    .map(str::trim)
+                    .map(ToString::to_string),
+            ),
+            ALTERNATIVE_NAME => mng.titles.extend(
+                value
+                    .text()
+                    .collect::<String>()
+                    .split(&[',', ';'])
+                    .map(str::trim)
+                    .map(ToString::to_string),
+            ),
+            STATUS => mng
+                .status
+                .extend(value.text().map(|f| f.trim().to_uppercase())),
+            GENRES => mng.genres.extend(
+                value
+                    .text()
+                    .collect::<String>()
+                    .split(&['-'])
+                    .map(str::trim)
+                    .map(str::to_lowercase)
+                    .filter_map(|f| map.get(&f)),
+            ),
+            _ => {}
+        };
+    }
 
-	let table_label_selector = Selector::parse("td.table-label").unwrap();
-	let table_value_selector = Selector::parse("td.table-value").unwrap();
+    let table_label_selector = Selector::parse("span.stre-label").unwrap();
+    let table_value_selector = Selector::parse("span.stre-value").unwrap();
 
-	let iter_label = doc.select(&table_label_selector);
-	let iter_value = doc.select(&table_value_selector);
+    let iter_label = doc.select(&table_label_selector);
+    let iter_value = doc.select(&table_value_selector);
 
-	let metadata_table = iter_label.zip(iter_value);
+    let metadata_table = iter_label.zip(iter_value);
 
-	for (label, value) in metadata_table {
-		match label.text().collect::<String>().as_str() {
-			AUTHOR => mng.authors.extend(value.text().collect::<String>().split(&['-']).map(ToString::to_string)),
-			ALTERNATIVE_NAME => {mng.titles.extend(value.text().collect::<String>().split(&[',', ';']).map(ToString::to_string))},
-			STATUS => mng.status.extend(value.text().map(|f| f.to_uppercase())),
-			GENRES => mng.genres.extend(value.text().collect::<String>().split(&['-']).filter_map(|f| map.get(f))),
-			_ => {}
-		};
-	}
+    for (label, value) in metadata_table {
+        if label.text().collect::<String>() == UPDATED {
+            let y = value.text().collect::<String>();
+            let x = y[0..y.len() - 3].trim();
+            mng.last_updated = NaiveDateTime::parse_from_str(x, "%b %d,%Y - %H:%M").ok();
+        }
+    }
 
-	let table_label_selector = Selector::parse("span.stre-label").unwrap();
-	let table_value_selector = Selector::parse("span.stre-value").unwrap();
+    let desc_sel = Selector::parse(".panel-story-info-description").unwrap();
 
-	let iter_label = doc.select(&table_label_selector);
-	let iter_value = doc.select(&table_value_selector);
+    if let Some(x) = doc.select(&desc_sel).next() {
+        let mut u = x.text().collect::<String>();
+        u.drain(0..=13);
+        mng.description.push_str(u.as_str().trim());
+    }
 
-	let metadata_table = iter_label.zip(iter_value);
+    let table_label_selector = Selector::parse("a.chapter-name").unwrap();
+    let table_value_selector = Selector::parse("span.chapter-time").unwrap();
 
-	for (label, value) in metadata_table {
-		if label.text().collect::<String>() == UPDATED {
-			let y  = value.text().collect::<String>();
-			let x = &y[0..y.len() - 3];
-			mng.last_updated = Some(NaiveDateTime::parse_from_str(x, "MMM dd,yyyy - HH:mm").map_err(|_| Error::TextParseError)?);
-		}
-	}
+    let iter_label = doc.select(&table_label_selector);
+    let iter_value = doc.select(&table_value_selector);
 
-	Ok(mng)
+    let images_selector = Selector::parse("div.container-chapter-reader > img").unwrap();
+
+    let chapter_table = iter_label.zip(iter_value);
+
+    for (idx, (t1, t2)) in chapter_table.enumerate() {
+        let mut t = ChapterTable {
+            sequence_number: idx as i32,
+            last_watch_time: Utc::now().timestamp_millis(),
+            updated_at: NaiveDateTime::parse_from_str(
+                t2.value().attr("title").unwrap_or("").trim(),
+                "%b %d,%Y %H:%M",
+            )
+            .ok(),
+            ..Default::default()
+        };
+
+        let t1_text = t1.text().collect::<String>();
+        let y = t1_text.find(':');
+        let chp = t1_text.find("Chapter");
+        t.chapter_name = t1_text.clone();
+        if chp.is_none() {
+            t.chapter_name = t1_text;
+        } else if y.is_some() {
+            let act_y = y.unwrap();
+            let act_chp = chp.unwrap();
+            if act_y + 2 < t1_text.len() {
+                t.chapter_name = t1_text[act_y + 2..].trim().to_string();
+            }
+            if act_y < t1_text.len() && act_chp + "Chapter".len() + 1 < t1_text.len() {
+                t.chapter_number = t1_text[act_chp + "Chapter".len() + 1..act_y]
+                    .trim()
+                    .to_string();
+            }
+        } else {
+            let act_chp = chp.unwrap();
+            if act_chp + "Chapter".len() + 1 < t1_text.len() {
+                t.chapter_number = t1_text[act_chp + "Chapter".len() + 1..].trim().to_string()
+            }
+        }
+
+        if let Some(url_chp) = t1.value().attr("href") {
+            t.pages = Html::parse_document(isahc::get_async(url_chp).await?.text().await?.as_str())
+                .select(&images_selector)
+                .filter_map(|f| f.value().attr("src"))
+                .map(ToString::to_string)
+                .enumerate()
+                .map(|(idx, u)| PageTable {
+                    url: u,
+                    page_number: idx as i32,
+                    ..Default::default()
+                })
+                .collect();
+        }
+
+        mng.chapters.push(t);
+    }
+
+    mng.chapters.reverse();
+
+    let sz = mng.chapters.len() as i32;
+
+    for t in mng.chapters.iter_mut() {
+        t.sequence_number = sz - t.sequence_number - 1;
+    }
+
+    Ok(mng)
 }

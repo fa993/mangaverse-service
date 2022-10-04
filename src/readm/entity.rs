@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use isahc::prelude::*;
 use mangaverse_entity::models::source::SourceTable;
 use scraper::{Html, Selector};
-use sqlx::{Pool, MySql};
+use sqlx::{MySql, Pool};
 
 use crate::Result;
 
@@ -12,7 +12,7 @@ use super::insert_source_if_not_exists;
 const SOURCE_NAME: &str = "readm";
 
 pub async fn get_readm_source(pool: &Pool<MySql>) -> Result<SourceTable> {
-	insert_source_if_not_exists(SOURCE_NAME, 1, pool).await
+    insert_source_if_not_exists(SOURCE_NAME, 1, pool).await
 }
 
 pub async fn get_readm_genre() -> Result<HashSet<String>> {
