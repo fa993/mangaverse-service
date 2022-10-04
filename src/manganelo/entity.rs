@@ -10,6 +10,8 @@ use sqlx::{
     MySql, Pool,
 };
 
+use lazy_static::lazy_static;
+
 use crate::{readm::insert_source_if_not_exists, Error, Result};
 
 const AUTHOR: &str = "Author(s) :";
@@ -19,6 +21,23 @@ const GENRES: &str = "Genres :";
 const UPDATED: &str = "Updated :";
 const SOURCE_NAME: &str = "manganelo";
 
+lazy_static! {
+    static ref GENRE_SELECTOR: Selector =
+        Selector::parse("div.advanced-search-tool-genres-list > span").unwrap();
+    static ref NAME_SELECTOR: Selector = Selector::parse("div.story-info-right > h1").unwrap();
+    static ref COVERURL_SELECTOR: Selector = Selector::parse("span.info-image > img").unwrap();
+    static ref METADATA_LABEL_SELECTOR: Selector = Selector::parse("td.table-label").unwrap();
+    static ref METADATA_VALUE_SELECTOR: Selector = Selector::parse("td.table-value").unwrap();
+    static ref UPDATED_LABEL_SELECTOR: Selector = Selector::parse("span.stre-label").unwrap();
+    static ref UPDATED_VALUE_SELECTOR: Selector = Selector::parse("span.stre-value").unwrap();
+    static ref CHAPTER_LABEL_SELECTOR: Selector = Selector::parse("a.chapter-name").unwrap();
+    static ref CHAPTER_VALUE_SELECTOR: Selector = Selector::parse("span.chapter-time").unwrap();
+    static ref DESCRIPTION_SELECTOR: Selector =
+        Selector::parse(".panel-story-info-description").unwrap();
+    static ref IMAGES_SELECTOR: Selector =
+        Selector::parse("div.container-chapter-reader > img").unwrap();
+}
+
 pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
     let url = "https://manganato.com/genre-all";
 
@@ -26,10 +45,8 @@ pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
 
     let doc = Html::parse_document(&response_text);
 
-    let genre_selector = Selector::parse("div.advanced-search-tool-genres-list > span").unwrap();
-
     Ok(doc
-        .select(&genre_selector)
+        .select(&GENRE_SELECTOR)
         .map(|f| f.text().collect::<String>().trim().to_lowercase())
         .collect())
 }
@@ -55,10 +72,8 @@ pub async fn get_manga<'a>(
             .as_str(),
     );
 
-    let name_selector = Selector::parse("div.story-info-right > h1").unwrap();
-
     mng.name.extend(
-        doc.select(&name_selector)
+        doc.select(&NAME_SELECTOR)
             .next()
             .ok_or(Error::TextParseError)?
             .text(),
@@ -69,17 +84,14 @@ pub async fn get_manga<'a>(
     mng.titles.push(mng.name.clone());
 
     mng.cover_url.push_str(
-        doc.select(&Selector::parse("span.info-image > img").unwrap())
+        doc.select(&COVERURL_SELECTOR)
             .next()
             .and_then(|f| f.value().attr("src"))
             .ok_or(Error::TextParseError)?,
     );
 
-    let table_label_selector = Selector::parse("td.table-label").unwrap();
-    let table_value_selector = Selector::parse("td.table-value").unwrap();
-
-    let iter_label = doc.select(&table_label_selector);
-    let iter_value = doc.select(&table_value_selector);
+    let iter_label = doc.select(&METADATA_LABEL_SELECTOR);
+    let iter_value = doc.select(&METADATA_VALUE_SELECTOR);
 
     let metadata_table = iter_label.zip(iter_value);
 
@@ -117,11 +129,8 @@ pub async fn get_manga<'a>(
         };
     }
 
-    let table_label_selector = Selector::parse("span.stre-label").unwrap();
-    let table_value_selector = Selector::parse("span.stre-value").unwrap();
-
-    let iter_label = doc.select(&table_label_selector);
-    let iter_value = doc.select(&table_value_selector);
+    let iter_label = doc.select(&UPDATED_LABEL_SELECTOR);
+    let iter_value = doc.select(&UPDATED_VALUE_SELECTOR);
 
     let metadata_table = iter_label.zip(iter_value);
 
@@ -133,21 +142,14 @@ pub async fn get_manga<'a>(
         }
     }
 
-    let desc_sel = Selector::parse(".panel-story-info-description").unwrap();
-
-    if let Some(x) = doc.select(&desc_sel).next() {
+    if let Some(x) = doc.select(&DESCRIPTION_SELECTOR).next() {
         let mut u = x.text().collect::<String>();
         u.drain(0..=13);
         mng.description.push_str(u.as_str().trim());
     }
 
-    let table_label_selector = Selector::parse("a.chapter-name").unwrap();
-    let table_value_selector = Selector::parse("span.chapter-time").unwrap();
-
-    let iter_label = doc.select(&table_label_selector);
-    let iter_value = doc.select(&table_value_selector);
-
-    let images_selector = Selector::parse("div.container-chapter-reader > img").unwrap();
+    let iter_label = doc.select(&CHAPTER_LABEL_SELECTOR);
+    let iter_value = doc.select(&CHAPTER_VALUE_SELECTOR);
 
     let chapter_table = iter_label.zip(iter_value);
 
@@ -189,7 +191,7 @@ pub async fn get_manga<'a>(
 
         if let Some(url_chp) = t1.value().attr("href") {
             t.pages = Html::parse_document(isahc::get_async(url_chp).await?.text().await?.as_str())
-                .select(&images_selector)
+                .select(&IMAGES_SELECTOR)
                 .filter_map(|f| f.value().attr("src"))
                 .map(ToString::to_string)
                 .enumerate()

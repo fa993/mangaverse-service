@@ -15,6 +15,7 @@ mangaverse-entity = {git = "https://github.com/fa993/mangaverse-entity", rev = "
 uuid = {version = "1.1.2", features = ["v4"]}
 dotenvy = "0.15.5"
 tuple-conv = "1.0.1"
+lazy_static = "1.4.0"
 
 [dependencies.sqlx]
 version = "0.5.13"
