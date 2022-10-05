@@ -1043,6 +1043,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "isahc",
+ "itertools",
  "lazy_static",
  "mangaverse-entity",
  "scraper",

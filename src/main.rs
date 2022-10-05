@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::db::genre::insert_genre;
+use crate::db::{genre::insert_genre, manga::get_manga};
 use async_std::prelude::FutureExt;
 use mangaverse_entity::models::{genre::Genre, source::SourceTable};
 use sqlx::mysql::MySqlPoolOptions;
@@ -96,5 +96,11 @@ async fn main() -> Result<()> {
     )
     .await?;
     println!("{:#?}", r);
+
+    println!(
+        "{:#?}",
+        get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?
+    );
+
     Ok(())
 }
