@@ -55,7 +55,29 @@ impl FromRow<'_, MySqlRow> for MangaTableWrapper<'_> {
     }
 }
 
-pub async fn update_manga(url: &str, mng: &mut MangaTable<'_>) {}
+pub async fn update_manga(
+    url: &str,
+    mng: &mut MangaTable<'_>,
+    pool: &Pool<MySql>,
+    c: &Context,
+) -> Result<()> {
+    let stored = get_manga(url, pool, c).await?;
+
+    let t = stored.name == mng.name
+        && stored.cover_url == mng.cover_url
+        && stored.last_updated == mng.last_updated
+        && stored.status == mng.status
+        && stored.description == mng.description;
+
+    if !t {
+        // update sql
+        sqlx::query!("UPDATE manga SET name = ?, cover_url = ?, last_updated = ?, status = ?, description = ? where manga_id = ?", mng.name, mng.cover_url, mng.last_updated, mng.status, mng.description, stored.id).execute(pool).await?;
+    }
+
+    //handle collection updates probably by a generic function
+
+    Ok(())
+}
 
 pub async fn get_manga<'a>(
     url: &'a str,
