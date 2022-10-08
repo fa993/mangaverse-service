@@ -98,6 +98,24 @@ async fn main() -> Result<()> {
     .await?;
     println!("{:#?}", r);
 
+    let r2 = readm::entity::get_manga(
+        String::from("https://readm.org/manga/19986"),
+        &c.sources["readm"],
+        &c.genres,
+    )
+    .await?;
+
+    println!("{:#?}", r2);
+
+    // let r2 = readm::entity::get_manga(
+    //     String::from("https://readm.org/manga/magic-emperor"),
+    //     &c.sources["readm"],
+    //     &c.genres,
+    // )
+    // .await?;
+
+    // println!("{:#?}", r2);
+
     println!(
         "{:#?}",
         get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?

@@ -5,7 +5,10 @@ use mangaverse_entity::models::{
     chapter::ChapterTable, genre::Genre, manga::MangaTable, page::PageTable, source::SourceTable,
 };
 use scraper::{Html, Selector};
-use sqlx::{types::chrono::NaiveDateTime, MySql, Pool};
+use sqlx::{
+    types::chrono::{NaiveDateTime, Utc},
+    MySql, Pool,
+};
 
 use crate::{Error, Result};
 
@@ -25,9 +28,9 @@ lazy_static! {
     static ref TITLES_SELECTOR: Selector = Selector::parse("div.sub-title").unwrap();
     static ref SUMMARY_SELECTOR: Selector = Selector::parse("div.series-summary-wrapper").unwrap();
     static ref MANGA_GENRE_SELECTOR: Selector = Selector::parse("a").unwrap();
-    static ref STATUS_SELECTOR: Selector = Selector::parse("series-status").unwrap();
-    static ref AUTHOR_SELECTOR: Selector = Selector::parse("span.first-episode > a").unwrap();
-    static ref ARTIST_SELECTOR: Selector = Selector::parse("span.last-episode > a").unwrap();
+    static ref STATUS_SELECTOR: Selector = Selector::parse(".series-status").unwrap();
+    static ref AUTHOR_SELECTOR: Selector = Selector::parse("span#first_episode > a").unwrap();
+    static ref ARTIST_SELECTOR: Selector = Selector::parse("span#last_episode > a").unwrap();
     static ref CHAPTER_SELECTOR: Selector = Selector::parse("td.table-episodes-title a").unwrap();
     static ref DESCRIPTION_SELECTOR: Selector = Selector::parse("p").unwrap();
     static ref CHAPTER_UPDATED_AT_SELECTOR: Selector = Selector::parse("div.media-date").unwrap();
@@ -59,6 +62,7 @@ pub async fn get_readm_genres() -> Result<HashSet<String>> {
         .collect())
 }
 
+#[allow(unused_must_use)]
 pub async fn get_manga<'a>(
     url: String,
     sc: &'a SourceTable,
@@ -119,50 +123,31 @@ pub async fn get_manga<'a>(
 
     if let Some(x) = doc.select(&STATUS_SELECTOR).next() {
         mng.status.extend(x.text());
+        mng.status = mng.status.trim().to_uppercase();
     } else {
         mng.status.push_str("Not Available");
     }
 
     if let Some(x) = doc.select(&AUTHOR_SELECTOR).next() {
-        mng.authors.push(x.text().collect());
+        mng.authors
+            .push(x.text().collect::<String>().trim().to_string());
     }
 
     if let Some(x) = doc.select(&ARTIST_SELECTOR).next() {
-        mng.artists.push(x.text().collect());
+        mng.artists
+            .push(x.text().collect::<String>().trim().to_string());
     }
 
     for (idx, i) in doc.select(&CHAPTER_SELECTOR).enumerate() {
-        if let Some(x) = i.value().attr("src") {
+        if let Some(x) = i.value().attr("href") {
             let mut t = ChapterTable {
                 sequence_number: idx as i32,
+                last_watch_time: Utc::now().timestamp_millis(),
                 ..Default::default()
             };
-
-            let y = Html::parse_document(&isahc::get_async(x).await?.text().await?);
-
-            if let Some(dt) = y.select(&CHAPTER_UPDATED_AT_SELECTOR).next() {
-                t.updated_at = NaiveDateTime::parse_from_str(
-                    dt.text().collect::<String>().as_str(),
-                    "%d %B %Y",
-                )
-                .ok()
-            }
-
-            if let Some(dt) = y.select(&CHAPTER_NUMBER_SELECTOR).next() {
-                t.chapter_number = dt.text().collect::<String>();
-            }
-
-            for (idxn, f) in y.select(&IMAGES_SELECTOR).enumerate() {
-                if let Some(dt) = f.value().attr("src") {
-                    let mut r = PageTable {
-                        page_number: idxn as i32,
-                        ..Default::default()
-                    };
-                    r.url.push_str(WEBSITE_HOST);
-                    r.url.push_str(dt);
-                    t.pages.push(r);
-                }
-            }
+            let mut r = String::from(WEBSITE_HOST);
+            r.push_str(x);
+            populate_chapter(&mut t, r.as_str()).await;
 
             mng.chapters.push(t);
         }
@@ -177,4 +162,29 @@ pub async fn get_manga<'a>(
     }
 
     Ok(mng)
+}
+
+async fn populate_chapter(t: &mut ChapterTable, x: &str) -> Result<()> {
+    let y = Html::parse_document(&isahc::get_async(x).await?.text().await?);
+    if let Some(dt) = y.select(&CHAPTER_UPDATED_AT_SELECTOR).next() {
+        let mut u = dt.text().collect::<String>().trim().to_string();
+        u.push_str(" 00:00:00");
+
+        t.updated_at = NaiveDateTime::parse_from_str(u.as_str(), "%d %B %Y %T").ok();
+    }
+    if let Some(dt) = y.select(&CHAPTER_NUMBER_SELECTOR).next() {
+        t.chapter_number = dt.text().collect::<String>();
+    }
+    for (idxn, f) in y.select(&IMAGES_SELECTOR).enumerate() {
+        if let Some(dt) = f.value().attr("src") {
+            let mut r = PageTable {
+                page_number: idxn as i32,
+                ..Default::default()
+            };
+            r.url.push_str(WEBSITE_HOST);
+            r.url.push_str(dt);
+            t.pages.push(r);
+        }
+    }
+    Ok(())
 }
