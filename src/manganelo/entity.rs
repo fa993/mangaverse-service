@@ -38,7 +38,7 @@ lazy_static! {
         Selector::parse("div.container-chapter-reader > img").unwrap();
 }
 
-pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
+pub async fn get_manganelo_genres() -> Result<HashSet<String>> {
     let url = "https://manganato.com/genre-all";
 
     let response_text = isahc::get_async(url).await?.text().await?;
@@ -55,6 +55,7 @@ pub async fn get_manganelo_source(pool: &Pool<MySql>) -> Result<SourceTable> {
     insert_source_if_not_exists(SOURCE_NAME, 2, pool).await
 }
 
+#[allow(unused_must_use)]
 pub async fn get_manga<'a>(
     url: String,
     sc: &'a SourceTable,
@@ -190,17 +191,7 @@ pub async fn get_manga<'a>(
         }
 
         if let Some(url_chp) = t1.value().attr("href") {
-            t.pages = Html::parse_document(isahc::get_async(url_chp).await?.text().await?.as_str())
-                .select(&IMAGES_SELECTOR)
-                .filter_map(|f| f.value().attr("src"))
-                .map(ToString::to_string)
-                .enumerate()
-                .map(|(idx, u)| PageTable {
-                    url: u,
-                    page_number: idx as i32,
-                    ..Default::default()
-                })
-                .collect();
+            populate_chapter(&mut t, url_chp).await;
         }
 
         mng.chapters.push(t);
@@ -215,4 +206,19 @@ pub async fn get_manga<'a>(
     }
 
     Ok(mng)
+}
+
+async fn populate_chapter(t: &mut ChapterTable, url_chp: &str) -> Result<()> {
+    t.pages = Html::parse_document(isahc::get_async(url_chp).await?.text().await?.as_str())
+        .select(&IMAGES_SELECTOR)
+        .filter_map(|f| f.value().attr("src"))
+        .map(ToString::to_string)
+        .enumerate()
+        .map(|(idx, u)| PageTable {
+            url: u,
+            page_number: idx as i32,
+            ..Default::default()
+        })
+        .collect();
+    Ok(())
 }
