@@ -1,11 +1,16 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 
 use isahc::prelude::*;
-use mangaverse_entity::models::{source::SourceTable, manga::MangaTable, genre::Genre, page::PageTable, chapter::ChapterTable};
+use mangaverse_entity::models::{
+    chapter::ChapterTable, genre::Genre, manga::MangaTable, page::PageTable, source::SourceTable,
+};
 use scraper::{Html, Selector};
-use sqlx::{MySql, Pool, types::chrono::{NaiveDateTime, Utc}};
+use sqlx::{
+    types::chrono::{NaiveDateTime, Utc},
+    MySql, Pool,
+};
 
-use crate::{Result, Error};
+use crate::{Error, Result};
 
 use super::insert_source_if_not_exists;
 
@@ -97,7 +102,6 @@ pub async fn get_manga<'a>(
             .and_then(|f| f.value().attr("src"))
             .ok_or(Error::TextParseError)?,
     );
-
 
     let iter_label = doc.select(&METADATA_LABEL_SELECTOR);
     let iter_value = doc.select(&METADATA_VALUE_SELECTOR);

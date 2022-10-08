@@ -1,14 +1,17 @@
 use std::collections::HashSet;
 
-use lazy_static::lazy_static;
-use scraper::{Selector, Html};
 use isahc::prelude::*;
+use lazy_static::lazy_static;
+use mangaverse_entity::models::source::SourceTable;
+use scraper::{Html, Selector};
+use sqlx::{MySql, Pool};
 
-use crate::Result;
+use crate::{readm::insert_source_if_not_exists, Result};
+
+const SOURCE_NAME: &str = "mangadino";
 
 lazy_static! {
-    static ref GENRE_SELECTOR: Selector =
-        Selector::parse("select[name='genre'] > option").unwrap();
+    static ref GENRE_SELECTOR: Selector = Selector::parse("select[name='genre'] > option").unwrap();
     static ref NAME_SELECTOR: Selector = Selector::parse("h1.page-title").unwrap();
     static ref COVERURL_SELECTOR: Selector = Selector::parse("img.series-profile-thumb").unwrap();
     static ref METADATA_LABEL_SELECTOR: Selector = Selector::parse("td.table-label").unwrap();
@@ -23,7 +26,6 @@ lazy_static! {
         Selector::parse("div.container-chapter-reader > img").unwrap();
 }
 
-
 pub async fn get_mangadino_genres() -> Result<HashSet<String>> {
     let url = "https://mangadino.com/action/";
 
@@ -34,8 +36,10 @@ pub async fn get_mangadino_genres() -> Result<HashSet<String>> {
     Ok(doc
         .select(&GENRE_SELECTOR)
         .skip(1)
-        .filter_map(|f| {
-            Some(f.text().collect::<String>().trim().to_lowercase())
-        })
+        .map(|f| f.text().collect::<String>().trim().to_lowercase())
         .collect())
+}
+
+pub async fn get_manganelo_source(pool: &Pool<MySql>) -> Result<SourceTable> {
+    insert_source_if_not_exists(SOURCE_NAME, 3, pool).await
 }

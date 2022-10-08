@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
 use crate::db::{genre::insert_genre, manga::get_manga};
-use async_std::prelude::FutureExt;
+use futures::join;
 use mangaverse_entity::models::{genre::Genre, source::SourceTable};
 use sqlx::mysql::MySqlPoolOptions;
 use thiserror::Error;
 use tuple_conv::RepeatedTuple;
 
 pub mod db;
+pub mod mangadino;
 pub mod manganelo;
 pub mod readm;
-pub mod mangadino;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -61,51 +61,47 @@ async fn setup_db() -> Result<sqlx::Pool<sqlx::MySql>> {
 async fn main() -> Result<()> {
     println!("Hello, world!");
 
-    let y = mangadino::entity::get_mangadino_genres().await?;
+    let pool = setup_db().await?;
 
-    println!("{:#?}", y);
+    let mut c = Context::default();
 
-    // let pool = setup_db().await?;
+    let f1 = manganelo::entity::get_manganelo_genres();
+    let f2 = readm::entity::get_readm_genres();
+    let f3 = mangadino::entity::get_mangadino_genres();
+    let r = join!(f1, f2, f3)
+        .to_vec()
+        .into_iter()
+        .filter_map(Result::ok)
+        .flatten()
+        .collect();
 
-    // let mut c = Context::default();
+    insert_genre(&r, &pool, &mut c.genres).await?;
 
-    // let f1 = manganelo::entity::get_manganelo_genres();
-    // let f2 = readm::entity::get_readm_genres();
-    // let r = f1
-    //     .try_join(f2)
-    //     .await?
-    //     .to_vec()
-    //     .into_iter()
-    //     .flatten()
-    //     .collect();
+    let g1 = manganelo::entity::get_manganelo_source(&pool);
+    let g2 = readm::entity::get_readm_source(&pool);
+    let g3 = mangadino::entity::get_manganelo_source(&pool);
 
-    // insert_genre(&r, &pool, &mut c.genres).await?;
+    c.sources = join!(g1, g2, g3)
+        .to_vec()
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(|f| (f.name.clone(), f))
+        .collect();
 
-    // let g1 = manganelo::entity::get_manganelo_source(&pool);
-    // let g2 = readm::entity::get_readm_source(&pool);
+    println!("{:#?}", c);
 
-    // let s = g1.try_join(g2).await?;
+    let r = manganelo::entity::get_manga(
+        String::from("https://manganato.com/manga-dh981316"),
+        &c.sources["manganelo"],
+        &c.genres,
+    )
+    .await?;
+    println!("{:#?}", r);
 
-    // c.sources = s
-    //     .to_vec()
-    //     .into_iter()
-    //     .map(|f| (f.name.clone(), f))
-    //     .collect();
-
-    // println!("{:#?}", c);
-
-    // let r = manganelo::entity::get_manga(
-    //     String::from("https://manganato.com/manga-dh981316"),
-    //     &c.sources["manganelo"],
-    //     &c.genres,
-    // )
-    // .await?;
-    // println!("{:#?}", r);
-
-    // println!(
-    //     "{:#?}",
-    //     get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?
-    // );
+    println!(
+        "{:#?}",
+        get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?
+    );
 
     Ok(())
 }
