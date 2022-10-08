@@ -38,7 +38,7 @@ lazy_static! {
         Selector::parse("div.container-chapter-reader > img").unwrap();
 }
 
-pub async fn get_manganelo_genre() -> Result<HashSet<String>> {
+pub async fn get_manganelo_genres() -> Result<HashSet<String>> {
     let url = "https://manganato.com/genre-all";
 
     let response_text = isahc::get_async(url).await?.text().await?;
