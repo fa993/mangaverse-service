@@ -5,10 +5,7 @@ use mangaverse_entity::models::{
     chapter::ChapterTable, genre::Genre, manga::MangaTable, page::PageTable, source::SourceTable,
 };
 use scraper::{Html, Selector};
-use sqlx::{
-    types::chrono::{NaiveDateTime, Utc},
-    MySql, Pool,
-};
+use sqlx::{types::chrono::NaiveDateTime, MySql, Pool};
 
 use crate::{Error, Result};
 
@@ -16,11 +13,6 @@ use super::insert_source_if_not_exists;
 
 use lazy_static::lazy_static;
 
-const AUTHOR: &str = "Author(s) :";
-const ALTERNATIVE_NAME: &str = "Alternative :";
-const STATUS: &str = "Status :";
-const GENRES: &str = "Genres :";
-const UPDATED: &str = "Updated :";
 const SOURCE_NAME: &str = "readm";
 
 const WEBSITE_HOST: &str = "https://readm.org";
@@ -30,16 +22,17 @@ lazy_static! {
         Selector::parse("ul.advanced-search-categories li").unwrap();
     static ref NAME_SELECTOR: Selector = Selector::parse("h1.page-title").unwrap();
     static ref COVERURL_SELECTOR: Selector = Selector::parse("img.series-profile-thumb").unwrap();
-    static ref METADATA_LABEL_SELECTOR: Selector = Selector::parse("td.table-label").unwrap();
-    static ref METADATA_VALUE_SELECTOR: Selector = Selector::parse("td.table-value").unwrap();
-    static ref UPDATED_LABEL_SELECTOR: Selector = Selector::parse("span.stre-label").unwrap();
-    static ref UPDATED_VALUE_SELECTOR: Selector = Selector::parse("span.stre-value").unwrap();
-    static ref CHAPTER_LABEL_SELECTOR: Selector = Selector::parse("a.chapter-name").unwrap();
-    static ref CHAPTER_VALUE_SELECTOR: Selector = Selector::parse("span.chapter-time").unwrap();
-    static ref DESCRIPTION_SELECTOR: Selector =
-        Selector::parse(".panel-story-info-description").unwrap();
-    static ref IMAGES_SELECTOR: Selector =
-        Selector::parse("div.container-chapter-reader > img").unwrap();
+    static ref TITLES_SELECTOR: Selector = Selector::parse("div.sub-title").unwrap();
+    static ref SUMMARY_SELECTOR: Selector = Selector::parse("div.series-summary-wrapper").unwrap();
+    static ref MANGA_GENRE_SELECTOR: Selector = Selector::parse("a").unwrap();
+    static ref STATUS_SELECTOR: Selector = Selector::parse("series-status").unwrap();
+    static ref AUTHOR_SELECTOR: Selector = Selector::parse("span.first-episode > a").unwrap();
+    static ref ARTIST_SELECTOR: Selector = Selector::parse("span.last-episode > a").unwrap();
+    static ref CHAPTER_SELECTOR: Selector = Selector::parse("td.table-episodes-title a").unwrap();
+    static ref DESCRIPTION_SELECTOR: Selector = Selector::parse("p").unwrap();
+    static ref CHAPTER_UPDATED_AT_SELECTOR: Selector = Selector::parse("div.media-date").unwrap();
+    static ref CHAPTER_NUMBER_SELECTOR: Selector = Selector::parse("span.light-title").unwrap();
+    static ref IMAGES_SELECTOR: Selector = Selector::parse("img.img-responsive").unwrap();
 }
 
 pub async fn get_readm_source(pool: &Pool<MySql>) -> Result<SourceTable> {
@@ -103,120 +96,76 @@ pub async fn get_manga<'a>(
             .ok_or(Error::TextParseError)?,
     );
 
-    let iter_label = doc.select(&METADATA_LABEL_SELECTOR);
-    let iter_value = doc.select(&METADATA_VALUE_SELECTOR);
-
-    let metadata_table = iter_label.zip(iter_value);
-
-    for (label, value) in metadata_table {
-        match label.text().collect::<String>().as_str() {
-            AUTHOR => mng.authors.extend(
-                value
-                    .text()
-                    .collect::<String>()
-                    .split(&['-'])
-                    .map(str::trim)
-                    .map(ToString::to_string),
-            ),
-            ALTERNATIVE_NAME => mng.titles.extend(
-                value
-                    .text()
-                    .collect::<String>()
-                    .split(&[',', ';'])
-                    .map(str::trim)
-                    .map(ToString::to_string),
-            ),
-            STATUS => mng
-                .status
-                .extend(value.text().map(|f| f.trim().to_uppercase())),
-            GENRES => mng.genres.extend(
-                value
-                    .text()
-                    .collect::<String>()
-                    .split(&['-'])
-                    .map(str::trim)
-                    .map(str::to_lowercase)
-                    .filter_map(|f| map.get(&f)),
-            ),
-            _ => {}
-        };
+    if let Some(x) = doc.select(&TITLES_SELECTOR).next() {
+        mng.titles.extend(
+            x.text()
+                .collect::<String>()
+                .split(&[',', ';'])
+                .map(|t| t.trim().to_string()),
+        );
     }
 
-    let iter_label = doc.select(&UPDATED_LABEL_SELECTOR);
-    let iter_value = doc.select(&UPDATED_VALUE_SELECTOR);
+    if let Some(x) = doc.select(&SUMMARY_SELECTOR).next() {
+        mng.description
+            .extend(x.select(&DESCRIPTION_SELECTOR).flat_map(|f| f.text()));
 
-    let metadata_table = iter_label.zip(iter_value);
+        mng.description = mng.description.trim().to_string();
 
-    for (label, value) in metadata_table {
-        if label.text().collect::<String>() == UPDATED {
-            let y = value.text().collect::<String>();
-            let x = y[0..y.len() - 3].trim();
-            mng.last_updated = NaiveDateTime::parse_from_str(x, "%b %d,%Y - %H:%M").ok();
-        }
+        mng.genres.extend(
+            x.select(&MANGA_GENRE_SELECTOR)
+                .filter_map(|f| map.get(f.text().collect::<String>().to_lowercase().trim())),
+        );
     }
 
-    if let Some(x) = doc.select(&DESCRIPTION_SELECTOR).next() {
-        let mut u = x.text().collect::<String>();
-        u.drain(0..=13);
-        mng.description.push_str(u.as_str().trim());
+    if let Some(x) = doc.select(&STATUS_SELECTOR).next() {
+        mng.status.extend(x.text());
+    } else {
+        mng.status.push_str("Not Available");
     }
 
-    let iter_label = doc.select(&CHAPTER_LABEL_SELECTOR);
-    let iter_value = doc.select(&CHAPTER_VALUE_SELECTOR);
+    if let Some(x) = doc.select(&AUTHOR_SELECTOR).next() {
+        mng.authors.push(x.text().collect());
+    }
 
-    let chapter_table = iter_label.zip(iter_value);
+    if let Some(x) = doc.select(&ARTIST_SELECTOR).next() {
+        mng.artists.push(x.text().collect());
+    }
 
-    for (idx, (t1, t2)) in chapter_table.enumerate() {
-        let mut t = ChapterTable {
-            sequence_number: idx as i32,
-            last_watch_time: Utc::now().timestamp_millis(),
-            updated_at: NaiveDateTime::parse_from_str(
-                t2.value().attr("title").unwrap_or("").trim(),
-                "%b %d,%Y %H:%M",
-            )
-            .ok(),
-            ..Default::default()
-        };
+    for (idx, i) in doc.select(&CHAPTER_SELECTOR).enumerate() {
+        if let Some(x) = i.value().attr("src") {
+            let mut t = ChapterTable {
+                sequence_number: idx as i32,
+                ..Default::default()
+            };
 
-        let t1_text = t1.text().collect::<String>();
-        let y = t1_text.find(':');
-        let chp = t1_text.find("Chapter");
-        t.chapter_name = t1_text.clone();
-        if chp.is_none() {
-            t.chapter_name = t1_text;
-        } else if y.is_some() {
-            let act_y = y.unwrap();
-            let act_chp = chp.unwrap();
-            if act_y + 2 < t1_text.len() {
-                t.chapter_name = t1_text[act_y + 2..].trim().to_string();
+            let y = Html::parse_document(&isahc::get_async(x).await?.text().await?);
+
+            if let Some(dt) = y.select(&CHAPTER_UPDATED_AT_SELECTOR).next() {
+                t.updated_at = NaiveDateTime::parse_from_str(
+                    dt.text().collect::<String>().as_str(),
+                    "%d %B %Y",
+                )
+                .ok()
             }
-            if act_y < t1_text.len() && act_chp + "Chapter".len() + 1 < t1_text.len() {
-                t.chapter_number = t1_text[act_chp + "Chapter".len() + 1..act_y]
-                    .trim()
-                    .to_string();
+
+            if let Some(dt) = y.select(&CHAPTER_NUMBER_SELECTOR).next() {
+                t.chapter_number = dt.text().collect::<String>();
             }
-        } else {
-            let act_chp = chp.unwrap();
-            if act_chp + "Chapter".len() + 1 < t1_text.len() {
-                t.chapter_number = t1_text[act_chp + "Chapter".len() + 1..].trim().to_string()
+
+            for (idxn, f) in y.select(&IMAGES_SELECTOR).enumerate() {
+                if let Some(dt) = f.value().attr("src") {
+                    let mut r = PageTable {
+                        page_number: idxn as i32,
+                        ..Default::default()
+                    };
+                    r.url.push_str(WEBSITE_HOST);
+                    r.url.push_str(dt);
+                    t.pages.push(r);
+                }
             }
+
+            mng.chapters.push(t);
         }
-
-        if let Some(url_chp) = t1.value().attr("href") {
-            t.pages = Html::parse_document(isahc::get_async(url_chp).await?.text().await?.as_str())
-                .select(&IMAGES_SELECTOR)
-                .filter_map(|f| f.value().attr("src"))
-                .map(ToString::to_string)
-                .enumerate()
-                .map(|(idx, u)| PageTable {
-                    url: u,
-                    page_number: idx as i32,
-                    ..Default::default()
-                })
-                .collect();
-        }
-
-        mng.chapters.push(t);
     }
 
     mng.chapters.reverse();
