@@ -1,4 +1,5 @@
 use crate::{Context, Result};
+use futures::{try_join, TryFutureExt};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use mangaverse_entity::models::chapter::ChapterTable;
@@ -19,6 +20,12 @@ lazy_static! {
 
 pub struct RowWrapper<T> {
     pub data: T,
+}
+
+impl From<RowWrapper<String>> for String {
+    fn from(rw: RowWrapper<String>) -> Self {
+        rw.data
+    }
 }
 
 pub struct MangaTableWrapper<'a> {
@@ -91,64 +98,60 @@ pub async fn get_manga<'a>(
 
     pub type RowWrapperString = RowWrapper<String>;
 
-    r.contents.titles = sqlx::query_as!(
+    let titles = sqlx::query_as!(
         RowWrapperString,
         "SELECT title as data from title where linked_id = ?",
         r.contents.linked_id
     )
     .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|f| f.data)
-    .collect();
-    r.contents.authors = sqlx::query_as!(
+    .map_err(Into::into);
+
+    let authors = sqlx::query_as!(
         RowWrapperString,
         "SELECT author.name as data from author, manga_author where manga_author.author_id = author.author_id and manga_author.manga_id = ?",
         r.contents.id
     )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|f| f.data)
-    .collect();
-    r.contents.artists = sqlx::query_as!(
+    .fetch_all(pool).map_err(Into::into);
+
+    let artists = sqlx::query_as!(
         RowWrapperString,
         "SELECT author.name as data from author, manga_artist where manga_artist.author_id = author.author_id and manga_artist.manga_id = ?",
         r.contents.id
     )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|f| f.data)
-    .collect();
-    r.contents.genres = sqlx::query_as!(
+    .fetch_all(pool).map_err(Into::into);
+
+    let genres = sqlx::query_as!(
         RowWrapperString,
         "SELECT genre.name as data from genre, manga_genre where manga_genre.genre_id = genre.genre_id and manga_genre.manga_id = ?",
         r.contents.id
     )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .filter_map(|f| c.genres.get(f.data.as_str()))
-    .collect();
+    .fetch_all(pool).map_err(Into::into);
+
+    let source = sqlx::query_as!(
+        RowWrapperString,
+        "SELECT name as data from source where source_id = ?",
+        r.source_id
+    )
+    .fetch_one(pool)
+    .map_err(Into::into);
+
+    let chaps = get_chapters(r.contents.id.as_str(), pool);
+
+    let res = try_join!(titles, authors, artists, genres, source, chaps)?;
+
+    r.contents.titles = res.0.into_iter().map(Into::into).collect();
+    r.contents.authors = res.1.into_iter().map(Into::into).collect();
+    r.contents.artists = res.2.into_iter().map(Into::into).collect();
+    r.contents.genres = res
+        .3
+        .into_iter()
+        .filter_map(|f| c.genres.get(f.data.as_str()))
+        .collect();
 
     //TODO eliminate this call using the multi key hashmap which is still under development
-    r.contents.source = c
-        .sources
-        .get(
-            sqlx::query_as!(
-                RowWrapperString,
-                "SELECT name as data from source where source_id = ?",
-                r.source_id
-            )
-            .fetch_one(pool)
-            .await?
-            .data
-            .as_str(),
-        )
-        .unwrap();
+    r.contents.source = c.sources.get(res.4.data.as_str()).unwrap();
 
-    r.contents.chapters = get_chapters(r.contents.id.as_str(), pool).await?;
+    r.contents.chapters = res.5;
 
     Ok(r.contents)
 }
