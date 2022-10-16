@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::db::{genre::insert_genre, manga::get_manga};
+use crate::db::{genre::insert_genre, manga::{get_manga, update_manga}};
 use futures::join;
 use mangaverse_entity::models::{genre::Genre, source::SourceTable};
 use sqlx::mysql::MySqlPoolOptions;
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
 
     let g1 = manganelo::entity::get_manganelo_source(&pool);
     let g2 = readm::entity::get_readm_source(&pool);
-    let g3 = mangadino::entity::get_manganelo_source(&pool);
+    let g3 = mangadino::entity::get_mangadino_source(&pool);
 
     c.sources = join!(g1, g2, g3)
         .to_vec()
@@ -90,15 +90,15 @@ async fn main() -> Result<()> {
 
     println!("{:#?}", c);
 
-    let r = manganelo::entity::get_manga(
-        String::from("https://manganato.com/manga-dh981316"),
-        &c.sources["manganelo"],
-        &c.genres,
-    )
-    .await?;
-    println!("{:#?}", r);
+    // let mut r = manganelo::entity::get_manga(
+    //     String::from("https://manganato.com/manga-dh981316"),
+    //     &c.sources["manganelo"],
+    //     &c.genres,
+    // )
+    // .await?;
+    // println!("{:#?}", r);
 
-    let r2 = readm::entity::get_manga(
+    let mut r2 = readm::entity::get_manga(
         String::from("https://readm.org/manga/19986"),
         &c.sources["readm"],
         &c.genres,
@@ -107,19 +107,21 @@ async fn main() -> Result<()> {
 
     println!("{:#?}", r2);
 
-    // let r2 = readm::entity::get_manga(
-    //     String::from("https://readm.org/manga/magic-emperor"),
-    //     &c.sources["readm"],
-    //     &c.genres,
-    // )
-    // .await?;
+    // // let r2 = readm::entity::get_manga(
+    // //     String::from("https://readm.org/manga/magic-emperor"),
+    // //     &c.sources["readm"],
+    // //     &c.genres,
+    // // )
+    // // .await?;
 
-    // println!("{:#?}", r2);
+    // // println!("{:#?}", r2);
 
-    println!(
-        "{:#?}",
-        get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?
-    );
+    // println!(
+    //     "{:#?}",
+    //     get_manga("https://manganato.com/manga-dh981316", &pool, &c).await?
+    // );
+
+    update_manga("https://readm.org/manga/19986", &mut r2, &pool, &c).await?;
 
     Ok(())
 }

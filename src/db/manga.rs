@@ -1,4 +1,7 @@
+use std::cmp::Ordering;
+
 use crate::{Context, Result};
+use futures::future::join_all;
 use futures::{try_join, TryFutureExt};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -8,7 +11,10 @@ use mangaverse_entity::models::page::PageTable;
 use mangaverse_entity::models::source::SourceTable;
 use sqlx::mysql::MySqlRow;
 use sqlx::types::chrono::NaiveDateTime;
-use sqlx::{FromRow, MySql, Pool, Row};
+use sqlx::{FromRow, Row, MySqlPool};
+use uuid::Uuid;
+
+use super::chapter::{update_chapter, add_extra_chaps, delete_extra_chaps};
 
 lazy_static! {
     static ref JUNK_SOURCE: SourceTable = SourceTable {
@@ -65,7 +71,7 @@ impl FromRow<'_, MySqlRow> for MangaTableWrapper<'_> {
 pub async fn update_manga(
     url: &str,
     mng: &mut MangaTable<'_>,
-    pool: &Pool<MySql>,
+    pool: &MySqlPool,
     c: &Context,
 ) -> Result<()> {
     let stored = get_manga(url, pool, c).await?;
@@ -83,12 +89,34 @@ pub async fn update_manga(
 
     //handle collection updates probably by a generic function
 
+    let fut = stored.chapters.iter().zip(mng.chapters.iter()).map(|(s, m)| {
+        update_chapter(s, m, pool)
+    }).collect::<Vec<_>>();
+
+    join_all(fut).await.iter().filter(|f| f.is_err()).for_each(|f| {println!("{}", f.as_ref().unwrap_err());});
+
+    match stored.chapters.len().cmp(&mng.chapters.len()) {
+        Ordering::Less => {
+            //add extra
+            for r in &mut mng.chapters[stored.chapters.len()..] {
+                r.chapter_id = Uuid::new_v4().to_string();
+                r.manga_id = stored.id.clone();
+            }
+            add_extra_chaps(&mng.chapters[stored.chapters.len()..], pool).await?;
+        },
+        Ordering::Greater => {
+            //delete extra
+            delete_extra_chaps(stored.chapters.iter().skip(mng.chapters.len()).map(|f| f.chapter_id.as_str()).collect::<Vec<_>>().as_slice(), pool).await?;
+        },
+        _ => {}
+    }
+
     Ok(())
 }
 
 pub async fn get_manga<'a>(
     url: &'a str,
-    pool: &'a Pool<MySql>,
+    pool: &'a MySqlPool,
     c: &'a Context,
 ) -> Result<MangaTable<'a>> {
     let mut r: MangaTableWrapper<'a> = sqlx::query_as("SELECT * from manga where url = ?")
@@ -156,7 +184,7 @@ pub async fn get_manga<'a>(
     Ok(r.contents)
 }
 
-pub async fn get_chapters(id: &str, pool: &Pool<MySql>) -> Result<Vec<ChapterTable>> {
+pub async fn get_chapters(id: &str, pool: &MySqlPool) -> Result<Vec<ChapterTable>> {
     //do a hack
     //use group concat to eliminate multiple sql calls and speed shit up
     //use space as separator
@@ -173,7 +201,7 @@ pub async fn get_chapters(id: &str, pool: &Pool<MySql>) -> Result<Vec<ChapterTab
         pub all_pages: Option<String>,
     }
 
-    let y = sqlx::query_as!(ChapterAndPages, "SELECT chapter.*, group_concat(chapter_page.chapter_page_id, ' ' ,chapter_page.url, ' ', chapter_page.page_number, ' ', chapter_page.chapter_id SEPARATOR ' ') as all_pages from chapter, chapter_page where chapter_page.chapter_id = chapter.chapter_id and chapter.manga_id = ? group by chapter_id", id).fetch_all(pool).await?;
+    let y = sqlx::query_as!(ChapterAndPages, "SELECT chapter.*, group_concat(chapter_page.chapter_page_id, ' ' ,chapter_page.url, ' ', chapter_page.page_number, ' ', chapter_page.chapter_id SEPARATOR ' ') as all_pages from chapter, chapter_page where chapter_page.chapter_id = chapter.chapter_id and chapter.manga_id = ? group by chapter_id order by sequence_number ASC", id).fetch_all(pool).await?;
 
     Ok(y.into_iter()
         .map(|f| ChapterTable {

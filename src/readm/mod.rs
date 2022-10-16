@@ -1,6 +1,5 @@
 use mangaverse_entity::models::source::SourceTable;
-use sqlx::MySql;
-use sqlx::Pool;
+use sqlx::MySqlPool;
 use uuid::Uuid;
 
 use crate::Error;
@@ -11,7 +10,7 @@ pub mod entity;
 pub async fn insert_source_if_not_exists(
     src_name: &str,
     pri: i32,
-    pool: &Pool<MySql>,
+    pool: &MySqlPool,
 ) -> Result<SourceTable> {
     let exists = sqlx::query_as!(
         SourceTable,

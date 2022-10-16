@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use mangaverse_entity::models::genre::Genre;
-use sqlx::{MySql, Pool, QueryBuilder};
+use sqlx::{QueryBuilder, MySqlPool};
 use uuid::Uuid;
 
 use crate::Result;
 
 pub async fn insert_genre(
     set: &HashSet<String>,
-    pool: &Pool<MySql>,
+    pool: &MySqlPool,
     out: &mut HashMap<String, Genre>,
 ) -> Result<()> {
     let mut q = QueryBuilder::new("INSERT into genre(genre_id, name) ");
